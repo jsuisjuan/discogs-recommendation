@@ -1,22 +1,22 @@
-from typing import Union
+import httpx
 from fastapi import FastAPI
-from pydantic import BaseModel
 
 app = FastAPI()
 
-class Item(BaseModel):
-    name: str
-    price: float
-    is_offer: Union[bool, None] = None
+DISCOGS_BASE_URL = "https://api.discogs.com"
+HEADERS = {
+    "User-Agent": "HouseRecommenderApp/1.0"
+}
 
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
-
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: Union[str, None] = None):
-    return {"item_id": item_id, "q": q}
-
-@app.put("/items/{item_id}")
-def update_item(item_id: int, item: Item):
-    return {"item_name": item.name, "item_id": item_id}
+@app.get("/release/{release_id}")
+async def get_release(release_id: int):
+    async with httpx.AsyncClient() as client:
+        url = f"{DISCOGS_BASE_URL}/releases/{release_id}"
+        response = await client.get(url, headers=HEADERS)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {
+                "error": "Release not found", 
+                "status_code": response.status_code
+            }
