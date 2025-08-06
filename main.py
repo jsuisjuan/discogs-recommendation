@@ -1,5 +1,4 @@
 import os
-import secrets
 import httpx
 import discogs_client
 
@@ -9,72 +8,71 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+
 load_dotenv()
 
 DISCOGS_BASE_URL = "https://api.discogs.com"
 HEADERS = {"User-Agent": "DiscogsRecommenderApp/1.0"}
 CONSUMER_KEY = os.getenv("CONSUMER_KEY")
 CONSUMER_SECRET = os.getenv("CONSUMER_SECRET")
+SECRET_KEY = os.getenv("SECRET_KEY")
 USER_AGENT = "DiscogsRecommenderApp/1.0"
 
 if not all([CONSUMER_KEY, CONSUMER_SECRET]):
     raise RuntimeError("Configure CONSUMER_KEY and CONSUMER_SECRET in .env")
 
 app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32))
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
-request_tokens: Dict[str, str] = {}
+
+def get_auth_client(token, secret):
+    return discogs_client.Client(USER_AGENT, consumer_key=CONSUMER_KEY,
+        consumer_secret=CONSUMER_SECRET, token=token, secret=secret)
+
 
 @app.get("/auth/login")
-async def login(request: Request):
+async def login(request: Request) -> RedirectResponse:
     client = discogs_client.Client(USER_AGENT)
     client.set_consumer_key(CONSUMER_KEY, CONSUMER_SECRET)
     oauth_token, oauth_secret, authorize_url = client.get_authorize_url(
         "http://localhost:8000/auth/callback"
     )
     request.session["request_token_secret"] = oauth_secret
+    request.session["request_token"] = oauth_token
     return RedirectResponse(authorize_url)
 
+
 @app.get("/auth/callback")
-async def callback(request: Request, oauth_token: str = None, oauth_verifier: str = None):
+async def callback(request: Request, oauth_token: str = None, 
+    oauth_verifier: str = None) -> JSONResponse:
+    
     if not all([oauth_token, oauth_verifier]):
-        return JSONResponse({"error": "missing oauth_token or oauth_verifier"}, status_code=400)
+        return JSONResponse({"error": "missing oauth_token or oauth_verifier"},
+            status_code=400)
     
-    oauth_secret = request.session.get("request_token_secret")
-    if oauth_secret is None:
-        return JSONResponse({"error": "session expired or invalid"}, status_code=400)
+    request_token = request.session.get("request_token")
+    request_secret = request.session.get("request_token_secret")
+    if not all([request_token, request_secret]):
+        return JSONResponse({"error": "session expired or invalid"}, 
+            status_code=400)
     
-    client = discogs_client.Client(USER_AGENT)
-    client.set_consumer_key(CONSUMER_KEY, CONSUMER_SECRET)
-    access_token, access_secret = client.get_access_token(oauth_verifier)
-    auth_client = discogs_client.Client(
-        USER_AGENT,
-        consumer_key=CONSUMER_KEY,
-        consumer_secret=CONSUMER_SECRET,
-        token=access_token,
-        secret=access_secret
-    )
+    auth_client = get_auth_client(request_token, request_secret)
+    access_token, access_secret = auth_client.get_access_token(oauth_verifier)
+    auth_client = get_auth_client(access_token, access_secret)
     me = auth_client.identity()
-    return JSONResponse({
-        "username": me.username,
-        "name": me.name,
-        "location": me.location,
-        "access_token": access_token,
-        "access_secret": access_secret
-    })
     
+    return JSONResponse({"username": me.username, "name": me.name, 
+        "location": me.location, "access_token": access_token, 
+        "access_secret": access_secret})
+
+
 @app.get("/me/collection")
 async def get_collection(oauth_token: str, oauth_secret: str):
-    auth_client = discogs_client.Client(
-        USER_AGENT,
-        consumer_key=CONSUMER_KEY,
-        consumer_secret=CONSUMER_SECRET,
-        token=oauth_token,
-        secret=oauth_secret
-    )
+    auth_client = get_auth_client(oauth_token, oauth_secret)
     me = auth_client.identity()
     collection = auth_client.user(me.username).collection_folders[0].releases
-    return {"count": collection.count, "titles": [r.release.title for r in collection]}
+    return {"count": collection.count, 
+        "titles": [r.release.title for r in collection]}
 
 
 @app.get("/release/{release_id}")
