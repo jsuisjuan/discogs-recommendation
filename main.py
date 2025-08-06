@@ -1,9 +1,9 @@
 import os
-import httpx
 import discogs_client
+from discogs_client import Client
 
 from dotenv import load_dotenv
-from typing import Dict
+from typing import Any, Dict
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -25,7 +25,7 @@ app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 
-def get_auth_client(token, secret):
+def get_auth_client(token: str, secret: str) -> Client:
     return discogs_client.Client(USER_AGENT, consumer_key=CONSUMER_KEY,
         consumer_secret=CONSUMER_SECRET, token=token, secret=secret)
 
@@ -35,8 +35,7 @@ async def login(request: Request) -> RedirectResponse:
     client = discogs_client.Client(USER_AGENT)
     client.set_consumer_key(CONSUMER_KEY, CONSUMER_SECRET)
     oauth_token, oauth_secret, authorize_url = client.get_authorize_url(
-        "http://localhost:8000/auth/callback"
-    )
+        "http://localhost:8000/auth/callback")
     request.session["request_token_secret"] = oauth_secret
     request.session["request_token"] = oauth_token
     return RedirectResponse(authorize_url)
@@ -67,21 +66,8 @@ async def callback(request: Request, oauth_token: str = None,
 
 
 @app.get("/me/collection")
-async def get_collection(oauth_token: str, oauth_secret: str):
+async def get_collection(oauth_token: str, oauth_secret: str) -> dict[str, Any]:
     auth_client = get_auth_client(oauth_token, oauth_secret)
     me = auth_client.identity()
-    collection = auth_client.user(me.username).collection_folders[0].releases
-    return {"count": collection.count, 
-        "titles": [r.release.title for r in collection]}
-
-
-@app.get("/release/{release_id}")
-async def get_release(release_id: int):
-    async with httpx.AsyncClient() as client:
-        url = f"{DISCOGS_BASE_URL}/releases/{release_id}"
-        response = await client.get(url, headers=HEADERS)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"error": "Release not found", 
-                "status_code": response.status_code}
+    collection = me.collection_folders[0].releases
+    return {"collection": [r.release.title for r in collection]}
