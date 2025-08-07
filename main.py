@@ -3,7 +3,7 @@ import discogs_client
 from discogs_client import Client
 
 from dotenv import load_dotenv
-from typing import Any, Dict
+from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
